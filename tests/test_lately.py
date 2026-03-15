@@ -248,3 +248,32 @@ def test_build_raw_summary_with_memo():
     summary = lately.build_raw_summary(repo)
     assert "[memo]" in summary
     assert "작업 중단" in summary
+
+
+# --- LLM payload tests ---
+
+def test_build_llm_payload_excludes_memo():
+    """Repos with valid memos are excluded from LLM payload."""
+    repos = [
+        {"name": "a", "git": {"branch": "main", "last_commit_msg": "fix", "dirty_count": 0}, "claude": None, "memo": "working on X", "last_activity": datetime.now(tz=timezone.utc)},
+        {"name": "b", "git": {"branch": "dev", "last_commit_msg": "add feature", "dirty_count": 1}, "claude": None, "memo": None, "last_activity": datetime.now(tz=timezone.utc)},
+    ]
+    payload = lately.build_llm_payload(repos)
+    assert len(payload) == 1
+    assert payload[0]["name"] == "b"
+
+
+def test_build_llm_payload_truncates():
+    """Long messages are truncated to 500 chars."""
+    repos = [
+        {
+            "name": "c",
+            "git": {"branch": "main", "last_commit_msg": "x", "dirty_count": 0},
+            "claude": {"custom_title": "t", "last_user_msg": "a" * 1000, "last_assistant_msg": "b" * 1000, "mtime": datetime.now(tz=timezone.utc)},
+            "memo": None,
+            "last_activity": datetime.now(tz=timezone.utc),
+        },
+    ]
+    payload = lately.build_llm_payload(repos)
+    assert len(payload[0]["last_user_msg"]) == 500
+    assert len(payload[0]["last_assistant_msg"]) == 500

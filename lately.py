@@ -271,6 +271,111 @@ def build_raw_summary(repo: dict) -> str:
     return ", ".join(parts) if parts else "(활동 없음)"
 
 
+def build_llm_payload(repos: list[dict]) -> list[dict]:
+    """Build payload for LLM summary. Excludes repos with valid memos."""
+    payload = []
+    for repo in repos:
+        if repo["memo"]:
+            continue
+        entry = {"name": repo["name"]}
+        git = repo["git"]
+        if git["branch"]:
+            entry["branch"] = git["branch"]
+        if git["last_commit_msg"]:
+            entry["last_commit"] = git["last_commit_msg"]
+        if git["dirty_count"]:
+            entry["uncommitted_changes"] = git["dirty_count"]
+
+        claude = repo.get("claude")
+        if claude:
+            if claude.get("custom_title"):
+                entry["session_title"] = claude["custom_title"]
+            if claude.get("last_user_msg"):
+                entry["last_user_msg"] = claude["last_user_msg"][:500]
+            if claude.get("last_assistant_msg"):
+                entry["last_assistant_msg"] = claude["last_assistant_msg"][:500]
+
+        payload.append(entry)
+    return payload
+
+
+def get_llm_summaries(repos: list[dict]) -> dict[str, str]:
+    """Call claude -p --model haiku to get per-repo summaries."""
+    payload = build_llm_payload(repos)
+    if not payload:
+        return {}
+
+    prompt = (
+        "다음 JSON은 여러 로컬 Git 레포의 최근 활동 데이터입니다.\n"
+        "각 레포별로 \"지금 뭘 하고 있었는지\"를 한 줄(30자 이내)로 요약해주세요.\n"
+        "커밋 메시지, 세션 타이틀, 마지막 대화 내용을 종합해서 판단하세요.\n\n"
+        "출력 형식 (JSON만, 다른 텍스트 없이):\n"
+        "{\"repo_name\": \"요약\", ...}\n\n"
+        f"데이터:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+    try:
+        result = sp.run(
+            ["claude", "-p", "--model", "haiku"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print("⚠ claude CLI 호출 실패", file=sys.stderr)
+            return {}
+
+        response = result.stdout.strip()
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(response[start:end])
+        return {}
+    except FileNotFoundError:
+        print("⚠ claude CLI를 찾을 수 없습니다. --raw 모드로 전환합니다.", file=sys.stderr)
+        return {}
+    except sp.TimeoutExpired:
+        print("⚠ claude CLI 응답 시간 초과", file=sys.stderr)
+        return {}
+    except json.JSONDecodeError:
+        print("⚠ LLM 응답 파싱 실패", file=sys.stderr)
+        return {}
+
+
+def display_results(repos: list[dict], summaries: dict[str, str], raw: bool = False) -> None:
+    """Print the formatted output table."""
+    if not repos:
+        print("활동이 있는 레포가 없습니다.")
+        return
+
+    now = datetime.now(tz=timezone.utc)
+
+    max_name = max(len(r["name"]) for r in repos)
+    max_name = max(max_name, 4)
+
+    print(f"{'레포':<{max_name}}  {'마지막 활동':<12}  요약")
+    print(f"{'─' * max_name}  {'─' * 12}  {'─' * 40}")
+
+    for repo in repos:
+        name = repo["name"]
+        if repo["last_activity"]:
+            time_str = format_relative_time(repo["last_activity"], now)
+        else:
+            time_str = "-"
+
+        if repo["memo"]:
+            summary = f"[memo] {repo['memo']}"
+        elif raw:
+            summary = build_raw_summary(repo)
+        elif name in summaries:
+            summary = summaries[name]
+        else:
+            summary = build_raw_summary(repo)
+
+        print(f"{name:<{max_name}}  {time_str:<12}  {summary}")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="lately",
@@ -321,8 +426,22 @@ def main(argv: list[str] | None = None) -> None:
         print(f"메모 저장됨: ~/home/{repo_name}/.lately")
         return
 
-    # Default: scan and display (placeholder)
-    print("(scan not implemented yet)")
+    # Scan repos
+    repos = scan_repos()
+
+    # Filter by --days
+    if args.days is not None:
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=args.days)
+        repos = [r for r in repos if r["last_activity"] and r["last_activity"] >= cutoff]
+
+    # Get LLM summaries (unless --raw)
+    summaries = {}
+    if not args.raw:
+        summaries = get_llm_summaries(repos)
+        if not summaries and any(r["memo"] is None for r in repos):
+            print("⚠ LLM 요약 실패, raw 모드로 표시합니다.\n", file=sys.stderr)
+
+    display_results(repos, summaries, raw=args.raw)
 
 
 if __name__ == "__main__":
