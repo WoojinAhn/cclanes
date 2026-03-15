@@ -277,3 +277,88 @@ def test_build_llm_payload_truncates():
     payload = lately.build_llm_payload(repos)
     assert len(payload[0]["last_user_msg"]) == 500
     assert len(payload[0]["last_assistant_msg"]) == 500
+
+
+# --- Cache tests ---
+
+def test_compute_cache_key():
+    """Cache key changes when git or session data changes."""
+    repo = {
+        "name": "myrepo",
+        "git": {"branch": "main", "last_commit_msg": "fix", "dirty_count": 0,
+                "last_commit_date": datetime(2026, 3, 15, tzinfo=timezone.utc), "has_remote": True},
+        "claude": {"custom_title": "t", "last_user_msg": "x", "last_assistant_msg": "y",
+                   "mtime": datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc)},
+        "memo": None,
+        "last_activity": datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc),
+    }
+    key1 = lately.compute_cache_key(repo)
+
+    # Different commit → different key
+    repo2 = {**repo, "git": {**repo["git"], "last_commit_msg": "new commit"}}
+    key2 = lately.compute_cache_key(repo2)
+    assert key1 != key2
+
+    # Different session mtime → different key
+    repo3 = {**repo, "claude": {**repo["claude"], "mtime": datetime(2026, 3, 16, tzinfo=timezone.utc)}}
+    key3 = lately.compute_cache_key(repo3)
+    assert key1 != key3
+
+
+def test_compute_cache_key_no_claude():
+    """Cache key works without Claude session data."""
+    repo = {
+        "name": "myrepo",
+        "git": {"branch": "main", "last_commit_msg": "fix", "dirty_count": 0,
+                "last_commit_date": datetime(2026, 3, 15, tzinfo=timezone.utc), "has_remote": True},
+        "claude": None,
+        "memo": None,
+        "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc),
+    }
+    key = lately.compute_cache_key(repo)
+    assert isinstance(key, str)
+    assert len(key) > 0
+
+
+def test_load_save_cache():
+    """Cache can be saved and loaded."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "cache.json"
+        cache = {"myrepo": {"key": "abc", "summary": "doing stuff"}}
+        lately.save_cache(cache, path)
+        loaded = lately.load_cache(path)
+        assert loaded["myrepo"]["summary"] == "doing stuff"
+
+
+def test_load_cache_empty():
+    """No cache file → empty dict."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "cache.json"
+        assert lately.load_cache(path) == {}
+
+
+def test_get_cached_summaries():
+    """Cached summaries are returned for repos with matching keys."""
+    repos = [
+        {"name": "a", "git": {"branch": "main", "last_commit_msg": "x", "dirty_count": 0,
+                               "last_commit_date": datetime(2026, 3, 15, tzinfo=timezone.utc), "has_remote": False},
+         "claude": None, "memo": None, "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc)},
+    ]
+    key = lately.compute_cache_key(repos[0])
+    cache = {"a": {"key": key, "summary": "cached result"}}
+    cached, uncached = lately.split_cached(repos, cache)
+    assert cached == {"a": "cached result"}
+    assert uncached == []
+
+
+def test_split_cached_miss():
+    """Repos with stale cache keys are returned as uncached."""
+    repos = [
+        {"name": "a", "git": {"branch": "main", "last_commit_msg": "NEW", "dirty_count": 0,
+                               "last_commit_date": datetime(2026, 3, 15, tzinfo=timezone.utc), "has_remote": False},
+         "claude": None, "memo": None, "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc)},
+    ]
+    cache = {"a": {"key": "old_stale_key", "summary": "old result"}}
+    cached, uncached = lately.split_cached(repos, cache)
+    assert cached == {}
+    assert len(uncached) == 1

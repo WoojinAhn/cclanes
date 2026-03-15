@@ -2,6 +2,7 @@
 """lately — per-repo 'what was I working on' CLI tool."""
 
 import argparse
+import hashlib
 import json
 import subprocess as sp
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 
 HOME_DIR = Path.home() / "home"
 CONFIG_PATH = Path.home() / ".lately" / "config.json"
+CACHE_PATH = Path.home() / ".lately" / "cache.json"
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 
@@ -271,6 +273,59 @@ def build_raw_summary(repo: dict) -> str:
     return ", ".join(parts) if parts else "(활동 없음)"
 
 
+def compute_cache_key(repo: dict) -> str:
+    """Compute a cache key based on git and claude session state."""
+    parts = []
+    git = repo["git"]
+    if git["last_commit_msg"]:
+        parts.append(git["last_commit_msg"])
+    if git["last_commit_date"]:
+        parts.append(str(git["last_commit_date"]))
+    parts.append(str(git["dirty_count"]))
+
+    claude = repo.get("claude")
+    if claude and claude.get("mtime"):
+        parts.append(str(claude["mtime"]))
+    if claude and claude.get("custom_title"):
+        parts.append(claude["custom_title"])
+
+    raw = "|".join(parts)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def load_cache(path: Path = CACHE_PATH) -> dict:
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def save_cache(cache: dict, path: Path = CACHE_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n")
+
+
+def split_cached(repos: list[dict], cache: dict) -> tuple[dict[str, str], list[dict]]:
+    """Split repos into cached (hit) and uncached (miss).
+
+    Returns (cached_summaries, uncached_repos).
+    """
+    cached_summaries = {}
+    uncached_repos = []
+    for repo in repos:
+        if repo["memo"]:
+            continue
+        key = compute_cache_key(repo)
+        entry = cache.get(repo["name"])
+        if entry and entry.get("key") == key:
+            cached_summaries[repo["name"]] = entry["summary"]
+        else:
+            uncached_repos.append(repo)
+    return cached_summaries, uncached_repos
+
+
 def build_llm_payload(repos: list[dict]) -> list[dict]:
     """Build payload for LLM summary. Excludes repos with valid memos."""
     payload = []
@@ -299,9 +354,8 @@ def build_llm_payload(repos: list[dict]) -> list[dict]:
     return payload
 
 
-def get_llm_summaries(repos: list[dict]) -> dict[str, str]:
-    """Call claude -p --model haiku to get per-repo summaries."""
-    payload = build_llm_payload(repos)
+def _call_llm(payload: list[dict]) -> dict[str, str]:
+    """Call claude -p --model haiku with a payload. Returns repo→summary dict."""
     if not payload:
         return {}
 
@@ -341,6 +395,39 @@ def get_llm_summaries(repos: list[dict]) -> dict[str, str]:
     except json.JSONDecodeError:
         print("⚠ LLM 응답 파싱 실패", file=sys.stderr)
         return {}
+
+
+def get_llm_summaries(repos: list[dict]) -> dict[str, str]:
+    """Get per-repo summaries with caching. Only calls LLM for changed repos."""
+    cache = load_cache()
+    cached_summaries, uncached_repos = split_cached(repos, cache)
+
+    # Call LLM only for uncached repos
+    new_summaries = {}
+    if uncached_repos:
+        payload = build_llm_payload(uncached_repos)
+        new_summaries = _call_llm(payload)
+
+    # Update cache with new results
+    if new_summaries:
+        for repo in uncached_repos:
+            name = repo["name"]
+            if name in new_summaries:
+                cache[name] = {
+                    "key": compute_cache_key(repo),
+                    "summary": new_summaries[name],
+                }
+        save_cache(cache)
+
+    # Merge cached + new
+    all_summaries = {**cached_summaries, **new_summaries}
+
+    if cached_summaries:
+        cache_count = len(cached_summaries)
+        new_count = len(new_summaries)
+        print(f"📋 캐시 {cache_count}개 / 새 분석 {new_count}개", file=sys.stderr)
+
+    return all_summaries
 
 
 def display_results(repos: list[dict], summaries: dict[str, str], raw: bool = False) -> None:
