@@ -3,7 +3,9 @@
 
 import argparse
 import json
+import subprocess as sp
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HOME_DIR = Path.home() / "home"
@@ -31,6 +33,41 @@ def add_excludes(cfg: dict, repos: list[str]) -> dict:
 def remove_excludes(cfg: dict, repos: list[str]) -> dict:
     cfg["exclude"] = [r for r in cfg["exclude"] if r not in repos]
     return cfg
+
+
+def collect_git_data(repo_path: Path) -> dict | None:
+    """Collect git metadata from a repo. Returns None if not a git repo."""
+    def git(*args: str) -> str | None:
+        try:
+            r = sp.run(["git", *args], cwd=repo_path,
+                       capture_output=True, text=True, timeout=10)
+            return r.stdout.strip() if r.returncode == 0 else None
+        except (sp.TimeoutExpired, FileNotFoundError):
+            return None
+
+    if git("rev-parse", "--git-dir") is None:
+        return None
+
+    branch = git("branch", "--show-current")
+    log_date = git("log", "-1", "--format=%cI")
+    log_msg = git("log", "-1", "--format=%s")
+    porcelain = git("status", "--porcelain")
+    remote = git("remote")
+
+    last_commit_date = None
+    if log_date:
+        try:
+            last_commit_date = datetime.fromisoformat(log_date)
+        except ValueError:
+            pass
+
+    return {
+        "branch": branch or None,
+        "last_commit_date": last_commit_date,
+        "last_commit_msg": log_msg or None,
+        "dirty_count": len(porcelain.splitlines()) if porcelain else 0,
+        "has_remote": bool(remote),
+    }
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
