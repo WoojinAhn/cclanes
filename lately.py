@@ -5,7 +5,7 @@ import argparse
 import json
 import subprocess as sp
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HOME_DIR = Path.home() / "home"
@@ -139,6 +139,91 @@ def parse_claude_session(jsonl_path: Path) -> dict | None:
         "last_assistant_msg": last_assistant_msg,
         "mtime": datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc),
     }
+
+
+MEMO_VALIDITY_MINUTES = 15
+
+
+def is_memo_valid(memo_mtime: datetime, last_activity: datetime | None) -> bool:
+    """Check if .lately memo is still valid relative to last activity.
+
+    Valid when memo and last activity are within 15 min of each other.
+    Always valid when no other activity exists.
+    """
+    if last_activity is None:
+        return True
+    gap = abs((memo_mtime - last_activity).total_seconds())
+    return gap <= MEMO_VALIDITY_MINUTES * 60
+
+
+def read_memo(repo_path: Path) -> tuple[str | None, datetime | None]:
+    """Read .lately memo file. Returns (content, mtime) or (None, None)."""
+    memo_path = repo_path / ".lately"
+    if not memo_path.exists():
+        return None, None
+    try:
+        content = memo_path.read_text().strip()
+        mtime = datetime.fromtimestamp(memo_path.stat().st_mtime, tz=timezone.utc)
+        return content if content else None, mtime
+    except OSError:
+        return None, None
+
+
+def scan_repos(
+    home_dir: Path = HOME_DIR,
+    config: dict | None = None,
+    claude_projects_dir: Path = CLAUDE_PROJECTS_DIR,
+) -> list[dict]:
+    """Scan all repos under home_dir and collect data."""
+    if config is None:
+        config = load_config()
+    excluded = set(config.get("exclude", []))
+
+    repos = []
+    for entry in sorted(home_dir.iterdir()):
+        if not entry.is_dir() or entry.name.startswith(".") or entry.name in excluded:
+            continue
+
+        git_data = collect_git_data(entry)
+        if git_data is None:
+            continue
+
+        # Claude session
+        session_file = find_claude_session(claude_projects_dir, entry.name)
+        claude_data = parse_claude_session(session_file) if session_file else None
+
+        # Memo
+        memo_content, memo_mtime = read_memo(entry)
+
+        # Determine last activity time (git + claude only, not memo)
+        activity_times = []
+        if git_data["last_commit_date"]:
+            activity_times.append(git_data["last_commit_date"])
+        if claude_data and claude_data["mtime"]:
+            activity_times.append(claude_data["mtime"])
+        last_activity = max(activity_times) if activity_times else None
+
+        # Check memo validity
+        memo_valid = False
+        if memo_content and memo_mtime:
+            memo_valid = is_memo_valid(memo_mtime, last_activity)
+
+        # Overall last activity (include memo mtime for sorting)
+        all_times = list(activity_times)
+        if memo_mtime:
+            all_times.append(memo_mtime)
+        overall_last = max(all_times) if all_times else None
+
+        repos.append({
+            "name": entry.name,
+            "git": git_data,
+            "claude": claude_data,
+            "memo": memo_content if memo_valid else None,
+            "last_activity": overall_last,
+        })
+
+    repos.sort(key=lambda r: r["last_activity"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return repos
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

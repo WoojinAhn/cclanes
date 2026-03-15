@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import sys
@@ -159,3 +159,50 @@ def test_find_claude_session_for_repo(tmp_path):
     result = lately.find_claude_session(tmp_path, "myrepo")
     assert result is not None
     assert result.name == "new-session.jsonl"
+
+
+# --- Memo validity tests ---
+
+def test_memo_valid_within_15min():
+    """Memo is valid when within 15 min of last activity."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.is_memo_valid(
+        memo_mtime=now,
+        last_activity=now - timedelta(minutes=10),
+    ) is True
+
+
+def test_memo_invalid_after_15min():
+    """Memo is stale when > 15 min from last activity."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.is_memo_valid(
+        memo_mtime=now - timedelta(hours=2),
+        last_activity=now,
+    ) is False
+
+
+def test_memo_valid_no_activity():
+    """Memo is always valid when no other activity exists."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.is_memo_valid(
+        memo_mtime=now,
+        last_activity=None,
+    ) is True
+
+
+def test_memo_valid_memo_after_activity():
+    """Memo written 5 min after last commit is valid."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.is_memo_valid(
+        memo_mtime=now,
+        last_activity=now - timedelta(minutes=5),
+    ) is True
+
+
+def test_memo_invalid_activity_much_later():
+    """Memo from yesterday, activity today → stale."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.is_memo_valid(
+        memo_mtime=now - timedelta(days=1),
+        last_activity=now,
+    ) is False
