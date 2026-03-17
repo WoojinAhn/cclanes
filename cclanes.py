@@ -295,28 +295,29 @@ def scan_repos(
     return repos
 
 
-def format_relative_time(dt: datetime, now: datetime | None = None) -> str:
-    """Format datetime as Korean relative time string."""
+def format_relative_time(dt: datetime, now: datetime | None = None, lang: str = "en") -> str:
+    """Format datetime as relative time string."""
     if now is None:
         now = datetime.now(tz=timezone.utc)
+    s = STRINGS[lang]
     diff = now - dt
     seconds = int(diff.total_seconds())
     if seconds < 60:
-        return "방금"
+        return s["just_now"]
     minutes = seconds // 60
     if minutes < 60:
-        return f"{minutes}분 전"
+        return s["minutes_ago"].format(n=minutes)
     hours = minutes // 60
     if hours < 24:
-        return f"{hours}시간 전"
+        return s["hours_ago"].format(n=hours)
     days = hours // 24
     if days < 14:
-        return f"{days}일 전"
+        return s["days_ago"].format(n=days)
     weeks = days // 7
     if weeks < 8:
-        return f"{weeks}주 전"
+        return s["weeks_ago"].format(n=weeks)
     months = days // 30
-    return f"{months}개월 전"
+    return s["months_ago"].format(n=months)
 
 
 def build_raw_summary(repo: dict) -> str:

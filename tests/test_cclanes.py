@@ -211,12 +211,29 @@ def test_memo_invalid_activity_much_later():
 # --- Output formatting tests ---
 
 def test_format_relative_time():
-    """Formats datetime as relative time string."""
+    """Formats datetime as Korean relative time string."""
     now = datetime.now(tz=timezone.utc)
-    assert lately.format_relative_time(now - timedelta(minutes=30), now) == "30분 전"
-    assert lately.format_relative_time(now - timedelta(hours=3), now) == "3시간 전"
-    assert lately.format_relative_time(now - timedelta(days=2), now) == "2일 전"
-    assert lately.format_relative_time(now - timedelta(days=14), now) == "2주 전"
+    assert lately.format_relative_time(now - timedelta(minutes=30), now, lang="ko") == "30분 전"
+    assert lately.format_relative_time(now - timedelta(hours=3), now, lang="ko") == "3시간 전"
+    assert lately.format_relative_time(now - timedelta(days=2), now, lang="ko") == "2일 전"
+    assert lately.format_relative_time(now - timedelta(days=14), now, lang="ko") == "2주 전"
+
+
+def test_format_relative_time_en():
+    """English relative time strings."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.format_relative_time(now - timedelta(seconds=10), now, lang="en") == "just now"
+    assert lately.format_relative_time(now - timedelta(minutes=30), now, lang="en") == "30m ago"
+    assert lately.format_relative_time(now - timedelta(hours=3), now, lang="en") == "3h ago"
+    assert lately.format_relative_time(now - timedelta(days=2), now, lang="en") == "2d ago"
+    assert lately.format_relative_time(now - timedelta(days=14), now, lang="en") == "2w ago"
+
+
+def test_format_relative_time_ko():
+    """Korean relative time strings still work."""
+    now = datetime.now(tz=timezone.utc)
+    assert lately.format_relative_time(now - timedelta(minutes=30), now, lang="ko") == "30분 전"
+    assert lately.format_relative_time(now - timedelta(hours=3), now, lang="ko") == "3시간 전"
 
 
 def test_build_raw_summary():
