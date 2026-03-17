@@ -340,16 +340,16 @@ def test_compute_cache_key():
         "memo": None,
         "last_activity": datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc),
     }
-    key1 = lately.compute_cache_key(repo)
+    key1 = lately.compute_cache_key(repo, lang="en")
 
     # Different commit → different key
     repo2 = {**repo, "git": {**repo["git"], "last_commit_msg": "new commit"}}
-    key2 = lately.compute_cache_key(repo2)
+    key2 = lately.compute_cache_key(repo2, lang="en")
     assert key1 != key2
 
     # Different session mtime → different key
     repo3 = {**repo, "claude": {**repo["claude"], "mtime": datetime(2026, 3, 16, tzinfo=timezone.utc)}}
-    key3 = lately.compute_cache_key(repo3)
+    key3 = lately.compute_cache_key(repo3, lang="en")
     assert key1 != key3
 
 
@@ -363,7 +363,7 @@ def test_compute_cache_key_no_claude():
         "memo": None,
         "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc),
     }
-    key = lately.compute_cache_key(repo)
+    key = lately.compute_cache_key(repo, lang="en")
     assert isinstance(key, str)
     assert len(key) > 0
 
@@ -392,9 +392,9 @@ def test_get_cached_summaries():
                                "last_commit_date": datetime(2026, 3, 15, tzinfo=timezone.utc), "has_remote": False},
          "claude": None, "memo": None, "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc)},
     ]
-    key = lately.compute_cache_key(repos[0])
+    key = lately.compute_cache_key(repos[0], lang="en")
     cache = {"a": {"key": key, "summary": "cached result"}}
-    cached, uncached = lately.split_cached(repos, cache)
+    cached, uncached = lately.split_cached(repos, cache, lang="en")
     assert cached == {"a": "cached result"}
     assert uncached == []
 
@@ -407,9 +407,24 @@ def test_split_cached_miss():
          "claude": None, "memo": None, "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc)},
     ]
     cache = {"a": {"key": "old_stale_key", "summary": "old result"}}
-    cached, uncached = lately.split_cached(repos, cache)
+    cached, uncached = lately.split_cached(repos, cache, lang="en")
     assert cached == {}
     assert len(uncached) == 1
+
+
+def test_cache_key_includes_lang():
+    """Same repo with different lang produces different cache keys."""
+    repo = {
+        "name": "myrepo",
+        "git": {"branch": "main", "last_commit_msg": "fix", "dirty_count": 0,
+                "last_commit_date": datetime(2026, 3, 15, tzinfo=timezone.utc), "has_remote": True},
+        "claude": None,
+        "memo": None,
+        "last_activity": datetime(2026, 3, 15, tzinfo=timezone.utc),
+    }
+    key_en = lately.compute_cache_key(repo, lang="en")
+    key_ko = lately.compute_cache_key(repo, lang="ko")
+    assert key_en != key_ko
 
 
 # --- Language detection tests ---

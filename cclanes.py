@@ -342,8 +342,8 @@ def build_raw_summary(repo: dict, lang: str = "en") -> str:
     return ", ".join(parts) if parts else s["no_activity"]
 
 
-def compute_cache_key(repo: dict) -> str:
-    """Compute a cache key based on git and claude session state."""
+def compute_cache_key(repo: dict, lang: str = "en") -> str:
+    """Compute a cache key based on git, claude session state, and language."""
     parts = []
     git = repo["git"]
     if git["last_commit_msg"]:
@@ -358,6 +358,7 @@ def compute_cache_key(repo: dict) -> str:
     if claude and claude.get("custom_title"):
         parts.append(claude["custom_title"])
 
+    parts.append(lang)
     raw = "|".join(parts)
     return hashlib.md5(raw.encode()).hexdigest()
 
@@ -376,7 +377,7 @@ def save_cache(cache: dict, path: Path = CACHE_PATH) -> None:
     path.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n")
 
 
-def split_cached(repos: list[dict], cache: dict) -> tuple[dict[str, str], list[dict]]:
+def split_cached(repos: list[dict], cache: dict, lang: str = "en") -> tuple[dict[str, str], list[dict]]:
     """Split repos into cached (hit) and uncached (miss).
 
     Returns (cached_summaries, uncached_repos).
@@ -386,7 +387,7 @@ def split_cached(repos: list[dict], cache: dict) -> tuple[dict[str, str], list[d
     for repo in repos:
         if repo["memo"]:
             continue
-        key = compute_cache_key(repo)
+        key = compute_cache_key(repo, lang=lang)
         entry = cache.get(repo["name"])
         if entry and entry.get("key") == key:
             cached_summaries[repo["name"]] = entry["summary"]
