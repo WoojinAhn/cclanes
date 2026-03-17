@@ -196,7 +196,7 @@ def parse_claude_session(jsonl_path: Path) -> dict | None:
                             break
 
     except (OSError, UnicodeDecodeError) as e:
-        print(f"⚠ 세션 파일 읽기 실패: {jsonl_path.name} ({e})", file=sys.stderr)
+        print(f"Warning: failed to read session file: {jsonl_path.name} ({e})", file=sys.stderr)
         return None
 
     if last_user_msg is None and last_assistant_msg is None and custom_title is None:
@@ -457,7 +457,7 @@ def _call_llm(payload: list[dict], lang: str = "en") -> dict[str, str]:
             timeout=60,
         )
         if result.returncode != 0:
-            print("⚠ claude CLI 호출 실패", file=sys.stderr)
+            print("Warning: claude CLI call failed", file=sys.stderr)
             return {}
 
         response = result.stdout.strip()
@@ -467,13 +467,13 @@ def _call_llm(payload: list[dict], lang: str = "en") -> dict[str, str]:
             return json.loads(response[start:end])
         return {}
     except FileNotFoundError:
-        print("⚠ claude CLI를 찾을 수 없습니다. --raw 모드로 전환합니다.", file=sys.stderr)
+        print("Warning: claude CLI not found. Falling back to --raw mode.", file=sys.stderr)
         return {}
     except sp.TimeoutExpired:
-        print("⚠ claude CLI 응답 시간 초과", file=sys.stderr)
+        print("Warning: claude CLI response timed out", file=sys.stderr)
         return {}
     except json.JSONDecodeError:
-        print("⚠ LLM 응답 파싱 실패", file=sys.stderr)
+        print("Warning: failed to parse LLM response", file=sys.stderr)
         return {}
 
 
@@ -586,23 +586,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    lang = detect_lang(args)
 
     # --exclude: add to config and exit
     if args.exclude:
-        repos = [r.strip() for r in args.exclude.split(",")]
+        repos_list = [r.strip() for r in args.exclude.split(",")]
         cfg = load_config()
-        cfg = add_excludes(cfg, repos)
+        cfg = add_excludes(cfg, repos_list)
         save_config(cfg)
-        print(f"제외 목록에 추가됨: {', '.join(repos)}")
+        print(STRINGS[lang]["excluded_added"].format(repos=", ".join(repos_list)))
         return
 
     # --include: remove from config and exit
     if args.include:
-        repos = [r.strip() for r in args.include.split(",")]
+        repos_list = [r.strip() for r in args.include.split(",")]
         cfg = load_config()
-        cfg = remove_excludes(cfg, repos)
+        cfg = remove_excludes(cfg, repos_list)
         save_config(cfg)
-        print(f"제외 목록에서 제거됨: {', '.join(repos)}")
+        print(STRINGS[lang]["excluded_removed"].format(repos=", ".join(repos_list)))
         return
 
     # --memo: write memo file and exit
@@ -610,10 +611,10 @@ def main(argv: list[str] | None = None) -> None:
         repo_name, message = args.memo
         memo_path = HOME_DIR / repo_name / ".cclanes"
         if not (HOME_DIR / repo_name).is_dir():
-            print(f"오류: ~/home/{repo_name} 디렉토리가 없습니다.", file=sys.stderr)
+            print(f"Error: ~/home/{repo_name} directory not found.", file=sys.stderr)
             sys.exit(1)
         memo_path.write_text(message + "\n")
-        print(f"메모 저장됨: ~/home/{repo_name}/.lately")
+        print(STRINGS[lang]["memo_saved"].format(repo=repo_name))
         return
 
     # Scan repos
@@ -627,11 +628,11 @@ def main(argv: list[str] | None = None) -> None:
     # Get LLM summaries (unless --raw)
     summaries = {}
     if not args.raw:
-        summaries = get_llm_summaries(repos)
+        summaries = get_llm_summaries(repos, lang=lang)
         if not summaries and any(r["memo"] is None for r in repos):
-            print("⚠ LLM 요약 실패, raw 모드로 표시합니다.\n", file=sys.stderr)
+            print("Warning: LLM summary failed, showing raw mode.\n", file=sys.stderr)
 
-    display_results(repos, summaries, raw=args.raw)
+    display_results(repos, summaries, raw=args.raw, lang=lang)
 
 
 if __name__ == "__main__":
