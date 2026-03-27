@@ -158,6 +158,7 @@ def parse_claude_session(jsonl_path: Path) -> dict | None:
     custom_title = None
     last_user_msg = None
     last_assistant_msg = None
+    last_timestamp = None
 
     try:
         text = jsonl_path.read_text(encoding="utf-8")
@@ -173,6 +174,15 @@ def parse_claude_session(jsonl_path: Path) -> dict | None:
                 continue
 
             msg_type = obj.get("type")
+
+            ts_str = obj.get("timestamp")
+            if ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if last_timestamp is None or ts > last_timestamp:
+                        last_timestamp = ts
+                except ValueError:
+                    pass
 
             if msg_type == "custom-title":
                 custom_title = obj.get("customTitle")
@@ -202,11 +212,13 @@ def parse_claude_session(jsonl_path: Path) -> dict | None:
     if last_user_msg is None and last_assistant_msg is None and custom_title is None:
         return None
 
+    mtime = last_timestamp or datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)
+
     return {
         "custom_title": custom_title,
         "last_user_msg": last_user_msg,
         "last_assistant_msg": last_assistant_msg,
-        "mtime": datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc),
+        "mtime": mtime,
     }
 
 

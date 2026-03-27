@@ -123,6 +123,20 @@ def test_parse_claude_session(tmp_path):
     assert data["custom_title"] == "fix-login-bug"
     assert "Now add tests" in data["last_user_msg"]
     assert "Adding test cases" in data["last_assistant_msg"]
+    assert data["mtime"] == datetime(2026, 3, 15, 10, 6, 0, tzinfo=timezone.utc)
+
+
+def test_parse_claude_session_mtime_uses_message_timestamp(tmp_path):
+    """mtime should come from JSONL message timestamps, not file mtime."""
+    jsonl = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "hello"}]}, "timestamp": "2026-03-10T12:00:00Z"}),
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}, "timestamp": "2026-03-10T12:01:00Z"}),
+    ]
+    jsonl.write_text("\n".join(lines) + "\n")
+    # File mtime will be "now", but session mtime should be from the message timestamps
+    data = lately.parse_claude_session(jsonl)
+    assert data["mtime"] == datetime(2026, 3, 10, 12, 1, 0, tzinfo=timezone.utc)
 
 
 def test_parse_claude_session_no_title(tmp_path):
